@@ -190,5 +190,14 @@ automatically — no `DISPLAY` / `WAYLAND_DISPLAY` setup needed. If the
 SDL Wayland backend misbehaves, force X11:
 
 ```sh
-SDL_VIDEODRIVER=x11 ./sdl_hello
+SDL_VIDEODRIVER=x11 ./hello
 ```
+
+For runnable examples see `examples/sdl/`:
+
+  - `hello_raw.rb`  — hello window via raw SDL FFI calls
+  - `hello.rb`      — hello window via the SdlApp DSL wrapper
+  - `shapes.rb`     — interactive drawing (arrow keys, R/G/B)
+  - `music.rb`      — synthetic audio + oscilloscope visualization
+
+All use the shared `examples/sdl2.rb` library.

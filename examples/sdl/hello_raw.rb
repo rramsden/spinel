@@ -2,23 +2,23 @@
 #
 # This shows what Spinel's FFI looks like without the friendly
 # SdlApp wrapper — every SDL call is visible. For a more compact
-# version using the wrapper, see examples/sdl_hello2.rb. For the
-# richer interactive shapes demo, see examples/sdl_shapes.rb.
+# version using the wrapper, see examples/sdl/hello.rb. For the
+# richer interactive shapes demo, see examples/sdl/shapes.rb.
 #
 # The FFI declarations (externs, constants, buffers) live in
 # examples/sdl2.rb — we `require_relative` it and then just ignore
 # the friendly classes on top.
 #
 # Build and run:
-#   ./spinel examples/sdl_hello.rb && ./sdl_hello
+#   ./spinel examples/sdl/hello_raw.rb && ./hello_raw
 #
 # On WSL2 with WSLg, the window appears on your Windows desktop.
 # Environment: no DISPLAY/WAYLAND_DISPLAY setup needed; WSLg exports
 # them automatically. If you hit rendering glitches, try
-#   SDL_VIDEODRIVER=x11 ./sdl_hello
+#   SDL_VIDEODRIVER=x11 ./hello_raw
 # to force the X11 backend through XWayland.
 
-require_relative "sdl2"
+require_relative "../sdl2"
 
 # ----------------------------------------------------------------------------
 # Manually drive SDL via the raw FFI layer. No SdlApp, no SdlColor —
