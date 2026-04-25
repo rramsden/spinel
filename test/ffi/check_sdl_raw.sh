@@ -1,7 +1,7 @@
 #!/bin/sh
 # SDL2 raw-FFI smoke check.
 #
-# Compiles examples/sdl/hello_raw.rb (demonstrates the raw SDL module
+# Compiles examples/ffi/sdl/hello_raw.rb (demonstrates the raw SDL module
 # without the SdlApp DSL wrapper) and verifies:
 #   1. Codegen succeeds.
 #   2. cc succeeds with -lSDL2 on the command line.
@@ -26,7 +26,7 @@ fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-./spinel examples/sdl/hello_raw.rb -o "$TMP/hello_raw" >/dev/null 2>&1
+./spinel examples/ffi/sdl/hello_raw.rb -o "$TMP/hello_raw" >/dev/null 2>&1
 
 if ! ldd "$TMP/hello_raw" | grep -q libSDL2; then
   echo "FAIL: libSDL2 not dynamically linked"

@@ -10,9 +10,9 @@
 #   ESC         quit
 #
 # Build and run:
-#   ./spinel examples/sdl/shapes.rb && ./shapes
+#   ./spinel examples/ffi/sdl/shapes.rb && ./shapes
 
-require_relative "../sdl2"
+require_relative "sdl2"
 
 app = sdl_open("Spinel + SDL2 (shapes demo)", 640, 480)
 if app == nil

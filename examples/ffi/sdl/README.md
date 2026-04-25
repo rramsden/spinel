@@ -1,6 +1,6 @@
 # SDL2 examples
 
-Four demos on top of the shared library in [`../sdl2.rb`](../sdl2.rb).
+Four demos on top of the shared library in [`sdl2.rb`](sdl2.rb).
 They're ordered from simplest to most involved — start at the top
 if you're learning the layer.
 
@@ -16,7 +16,7 @@ if you're learning the layer.
 All examples compile the same way:
 
 ```sh
-./spinel examples/sdl/hello.rb     # compiles to ./hello
+./spinel examples/ffi/sdl/hello.rb     # compiles to ./hello
 ./hello
 ```
 
@@ -33,13 +33,13 @@ sudo apt install -y libsdl2-dev
 
 On WSL2 with WSLg (default on recent Windows 11/10), windows render
 to your Windows desktop with no environment setup. See
-[`../../docs/FFI.md`](../../docs/FFI.md) for the full FFI reference
-and WSL2/WSLg notes.
+[`../../../docs/FFI.md`](../../../docs/FFI.md) for the full FFI
+reference and WSL2/WSLg notes.
 
 ## Where the plumbing lives
 
-- [`../sdl2.rb`](../sdl2.rb)  — raw FFI declarations (`module SDL`),
+- [`sdl2.rb`](sdl2.rb)  — raw FFI declarations (`module SDL`),
   the `SdlApp` class, color helpers, keycode mapping. All examples
-  here just `require_relative "../sdl2"`.
-- [`../../docs/FFI.md`](../../docs/FFI.md) — full FFI DSL reference,
-  type-spec table, ownership rules, WSL2 notes.
+  here just `require_relative "sdl2"`.
+- [`../../../docs/FFI.md`](../../../docs/FFI.md) — full FFI DSL
+  reference, type-spec table, ownership rules, WSL2 notes.

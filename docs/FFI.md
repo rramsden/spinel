@@ -193,11 +193,12 @@ SDL Wayland backend misbehaves, force X11:
 SDL_VIDEODRIVER=x11 ./hello
 ```
 
-For runnable examples see `examples/sdl/`:
+For runnable FFI examples see `examples/ffi/`:
 
-  - `hello_raw.rb`  — hello window via raw SDL FFI calls
-  - `hello.rb`      — hello window via the SdlApp DSL wrapper
-  - `shapes.rb`     — interactive drawing (arrow keys, R/G/B)
-  - `music.rb`      — synthetic audio + oscilloscope visualization
+  - `libm.rb`         — libm smoke (cos/sqrt/pow/strlen), no SDL
+  - `sdl/hello_raw.rb` — hello window via raw SDL FFI calls
+  - `sdl/hello.rb`     — hello window via the SdlApp DSL wrapper
+  - `sdl/shapes.rb`    — interactive drawing (arrow keys, R/G/B)
+  - `sdl/music.rb`     — synthetic audio + oscilloscope visualization
 
-All use the shared `examples/sdl2.rb` library.
+The SDL demos all share `examples/ffi/sdl/sdl2.rb`.

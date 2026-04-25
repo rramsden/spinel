@@ -16,7 +16,7 @@ cd "$DIR"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-./spinel examples/ffi_libm.rb -o "$TMP/libm" >/dev/null 2>&1
+./spinel examples/ffi/libm.rb -o "$TMP/libm" >/dev/null 2>&1
 out=$("$TMP/libm")
 expected="1
 4
