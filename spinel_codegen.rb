@@ -4132,6 +4132,11 @@ class Compiler
     if is_nullable_type(t) == 1
       t = base_type(t)
     end
+    # Raw C pointer (for FFI). Intentionally NOT a GC pointer —
+    # foreign pointers are user-managed; the GC must not trace them.
+    if t == "ptr"
+      return 0
+    end
     if t == "int_array"
       return 1
     end
@@ -4270,6 +4275,9 @@ class Compiler
   def is_nullable_pointer_type(t)
     # Pointer types that can represent nil as NULL
     bt = base_type(t)
+    if bt == "ptr"
+      return 1
+    end
     if bt == "string" || bt == "mutable_str"
       return 1
     end
@@ -4348,6 +4356,10 @@ class Compiler
     end
     if t == "int"
       return "mrb_int"
+    end
+    # Raw C pointer for FFI (void *). See type_is_pointer for GC rules.
+    if t == "ptr"
+      return "void *"
     end
     if t == "bigint"
       return "sp_Bigint *"
@@ -4452,6 +4464,9 @@ class Compiler
     end
     if t == "int"
       return "0"
+    end
+    if t == "ptr"
+      return "NULL"
     end
     if t == "bigint"
       return "NULL"
