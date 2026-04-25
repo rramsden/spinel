@@ -136,57 +136,107 @@ module SDL
   ffi_func :SDL_RenderFillRect,     [:ptr, :ptr],                             :int
   ffi_func :SDL_RenderDrawRect,     [:ptr, :ptr],                             :int
 
+  # Surface/texture helpers
+  ffi_func :SDL_CreateTextureFromSurface, [:ptr, :ptr],                     :ptr
+  ffi_func :SDL_FreeSurface,              [:ptr],                            :void
+  ffi_func :SDL_DestroyTexture,           [:ptr],                            :void
+  ffi_func :SDL_SetTextureColorMod,       [:ptr, :uint8, :uint8, :uint8],   :int
+  ffi_func :SDL_RenderCopy,               [:ptr, :ptr, :ptr, :ptr],          :int
+
   # --- Events ---
-  # SDL_Event is a 56-byte union; we reserve 64 for safety.
-  ffi_func :SDL_PollEvent,          [:ptr],                                   :int
+  ffi_func :SDL_PollEvent,                [:ptr],                            :int
   ffi_buffer :event_buf, 64
-  # `type` is at offset 0; SDL_KeyboardEvent.keysym.sym at offset 20.
   ffi_read_u32 :event_type_raw, 0
   ffi_read_u32 :event_key_sym_raw, 20
+  # SDL_WindowEvent layout:
+  #   Uint32 type       (offset 0)
+  #   Uint32 timestamp  (offset 4)
+  #   Uint32 windowID   (offset 8)
+  #   Uint8  event      (offset 12)  <-- subtype (SHOWN, CLOSE, ...)
+  ffi_read_u8  :event_window_event, 12
+  ffi_const :WINDOWEVENT_CLOSE, 14
+end
 
-  # --- Audio ---
-  # Audio format constants.
-  ffi_const :AUDIO_S16LSB, 0x8010       # signed 16-bit little endian
-  ffi_const :AUDIO_S16SYS, 0x8010       # same on x86_64 (LE host)
+# =============================================================================
+# SDL_ttf bindings
+# =============================================================================
 
-  # Queue-based audio API. Leaves callback=NULL in the spec.
-  ffi_func :SDL_OpenAudio,          [:ptr, :ptr],                             :int
-  ffi_func :SDL_CloseAudio,         [],                                       :void
-  ffi_func :SDL_PauseAudio,         [:int],                                   :void
-  ffi_func :SDL_QueueAudio,         [:uint32, :ptr, :uint32],                 :int
-  ffi_func :SDL_GetQueuedAudioSize, [:uint32],                                :uint32
-  ffi_func :SDL_ClearQueuedAudio,   [:uint32],                                :void
+module SDL_TTF
+  ffi_lib "SDL2_ttf"
 
-  # SDL_AudioSpec is 32 bytes. Layout (x86_64):
-  #   freq     : int     @ 0
-  #   format   : uint16  @ 4
-  #   channels : uint8   @ 6
-  #   silence  : uint8   @ 7  (output: filled by SDL on open)
-  #   samples  : uint16  @ 8
-  #   padding  : uint16  @ 10
-  #   size     : uint32  @ 12 (output: filled by SDL on open)
-  #   callback : fnptr   @ 16 (left NULL for queue API)
-  #   userdata : ptr     @ 24 (left NULL)
-  ffi_buffer :audio_spec_desired,  32
-  ffi_buffer :audio_spec_obtained, 32
-  ffi_write_i32 :aspec_set_freq,     0
-  ffi_write_u16 :aspec_set_format,   4
-  ffi_write_u8  :aspec_set_channels, 6
-  ffi_write_u16 :aspec_set_samples,  8
-  ffi_write_ptr :aspec_set_callback, 16
-  ffi_write_ptr :aspec_set_userdata, 24
-  ffi_read_i32  :aspec_get_freq,     0
-  ffi_read_u32  :aspec_get_size,     12
+  ffi_func :TTF_Init,           [],                              :int
+  ffi_func :TTF_Quit,           [],                              :void
+  ffi_func :TTF_OpenFont,       [:str, :int],                    :ptr
+  ffi_func :TTF_CloseFont,      [:ptr],                          :void
+  ffi_func :TTF_OpenFontIndex,  [:str, :int, :int],              :ptr
+  ffi_func :TTF_OpenFontRW,     [:ptr, :int, :int],              :ptr
+  ffi_func :TTF_GetFontStyle,   [:ptr],                          :int
+  ffi_func :TTF_SetFontStyle,   [:ptr, :int],                    :int
+  ffi_func :TTF_GetFontOutline, [:ptr],                          :int
+  ffi_func :TTF_SetFontOutline, [:ptr, :int],                    :int
+  ffi_func :TTF_GetFontHinting, [:ptr],                          :int
+  ffi_func :TTF_SetFontHinting, [:ptr, :int],                    :int
+  ffi_func :TTF_GetFontHeight,  [:ptr],                          :int
+  ffi_func :TTF_GetFontLineSkip, [:ptr],                       :int
+  ffi_func :TTF_GetFontKerning, [:ptr],                        :int
+  ffi_func :TTF_SetFontKerning, [:ptr, :int],                  :int
+  ffi_func :TTF_GetFontFaces, [:ptr],                          :int
+  ffi_func :TTF_GetFontInfo, [:ptr, :ptr],                      :int
+  ffi_func :TTF_SizeText, [:ptr, :str, :ptr, :ptr],            :int
+  ffi_func :TTF_SizeUTF8, [:ptr, :str, :ptr, :ptr],            :int
+  ffi_func :TTF_SizePangoText, [:ptr, :ptr, :ptr, :ptr, :ptr], :int
+  ffi_func :TTF_SizePangoUTF8, [:ptr, :ptr, :ptr, :ptr, :ptr], :int
+  ffi_func :TTF_SizeGlyph, [:ptr, :uint16, :ptr, :ptr],       :int
+  ffi_func :TTF_RenderText_Shaded, [:ptr, :str, :ptr, :ptr],   :ptr
+  ffi_func :TTF_RenderUTF8_Shaded, [:ptr, :str, :ptr, :ptr],   :ptr
+  ffi_func :TTF_RenderGlyph_Shaded, [:ptr, :uint16, :ptr, :ptr], :ptr
+  # NOTE on SDL_Color ABI:
+  # SDL_Color is a 4-byte struct {Uint8 r,g,b,a}. The C API takes it
+  # BY VALUE, not by pointer. On SysV x86-64, structs <= 8 bytes of
+  # integer members are passed in a single integer register, so the
+  # color is delivered to the callee packed into the low 32 bits of
+  # that register as 0xAABBGGRR (little-endian byte order: r @ byte 0,
+  # g @ byte 1, b @ byte 2, a @ byte 3).
+  #
+  # Spinel's FFI DSL has no struct-by-value primitive, and passing
+  # `:ptr` would put the *address* of our color buffer into the
+  # register — SDL_ttf would then read the low 4 bytes of the BSS
+  # address as RGBA, producing a different color on every launch
+  # (thanks to ASLR). We therefore declare the color argument as
+  # `:uint32` and pack it ourselves via `sdl_pack_color`.
+  ffi_func :TTF_RenderText_Blended, [:ptr, :str, :uint32],     :ptr
+  ffi_func :TTF_RenderUTF8_Blended, [:ptr, :str, :uint32],     :ptr
+  ffi_func :TTF_RenderGlyph_Blended, [:ptr, :uint16, :uint32], :ptr
+  ffi_func :TTF_RenderText_Blended_Wrapped, [:ptr, :str, :uint32, :uint32], :ptr
+  ffi_func :TTF_RenderUTF8_Blended_Wrapped, [:ptr, :str, :uint32, :uint32], :ptr
+  ffi_func :TTF_RenderText_Shaded_Wrapped, [:ptr, :str, :uint32, :uint32], :ptr
+  ffi_func :TTF_RenderUTF8_Shaded_Wrapped, [:ptr, :str, :uint32, :uint32], :ptr
+  ffi_func :TTF_SetFontDirection, [:ptr, :int],                :int
+  ffi_func :TTF_SetFontLetterSpacing, [:ptr, :uint16],         :int
 
-  # A scratch PCM buffer the caller can fill with samples. Sized for
-  # ~1 second of signed 16-bit mono at 44.1 kHz = 44100 samples = 88200 bytes.
-  # Users needing larger buffers can declare their own ffi_buffer.
-  ffi_buffer :audio_pcm, 88200
-  # 16-bit signed sample accessors. Use 3-arg form for array access:
-  #   SDL.pcm_set_s16(SDL.audio_pcm, i, value)
-  #   SDL.pcm_get_s16(SDL.audio_pcm, i)
-  ffi_write_i16 :pcm_set_s16, 0
-  ffi_read_i16  :pcm_get_s16, 0
+  # (No SDL_Color buffer: colors are packed into a uint32 and passed
+  # by value via sdl_pack_color, matching SDL_Color's C ABI on
+  # SysV x86-64. See the NOTE on the Blended bindings above.)
+
+  # SDL_Rect buffer (x, y, w, h — each int = 4 bytes)
+  ffi_buffer :dst_rect, 16
+  ffi_write_i32 :dst_rect_set_x, 0
+  ffi_write_i32 :dst_rect_set_y, 4
+  ffi_write_i32 :dst_rect_set_w, 8
+  ffi_write_i32 :dst_rect_set_h, 12
+  ffi_read_i32  :dst_rect_get_x, 0
+  ffi_read_i32  :dst_rect_get_y, 4
+  ffi_read_i32  :dst_rect_get_w, 8
+  ffi_read_i32  :dst_rect_get_h, 12
+
+  # Surface dimension accessors.
+  # SDL_Surface layout on a 64-bit LP64 system:
+  #   Uint32           flags;   offset 0   (4 bytes + 4 pad)
+  #   SDL_PixelFormat *format;  offset 8   (8 bytes, 8-aligned)
+  #   int              w;       offset 16
+  #   int              h;       offset 20
+  ffi_read_i32  :surface_get_w, 16
+  ffi_read_i32  :surface_get_h, 20
 end
 
 # =============================================================================
@@ -203,6 +253,13 @@ end
 # Convenience constructors
 def sdl_rgb(r, g, b);      SdlColor.new(r, g, b, 255); end
 def sdl_rgba(r, g, b, a);  SdlColor.new(r, g, b, a); end
+
+# Pack RGBA bytes into the single uint32 that SDL_Color occupies when
+# passed by value on SysV x86-64: byte 0 = R, byte 1 = G, byte 2 = B,
+# byte 3 = A. Use this to feed TTF_Render*_Blended and friends.
+def sdl_pack_color(r, g, b, a)
+  (a << 24) | (b << 16) | (g << 8) | r
+end
 
 # =============================================================================
 # SdlApp — window + renderer + events + drawing, all flattened
@@ -280,6 +337,14 @@ class SdlApp
       end
     elsif et == SDL::EVT_KEYUP
       @last_key = SDL.event_key_sym_raw(SDL.event_buf)
+    elsif et == SDL::EVT_WINDOWEVENT
+      # SDL_WINDOWEVENT subtype is a uint8 at offset 12 in the
+      # SDL_Event union (SDL_WindowEvent.event). Only bail on CLOSE;
+      # other subtypes (SHOWN, EXPOSED, FOCUS_GAINED, ...) fire during
+      # normal window life and must not quit the app.
+      if SDL.event_window_event(SDL.event_buf) == SDL::WINDOWEVENT_CLOSE
+        @running = false
+      end
     end
     et
   end
