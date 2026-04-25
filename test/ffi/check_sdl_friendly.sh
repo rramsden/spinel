@@ -1,0 +1,44 @@
+#!/bin/sh
+# Friendly SDL wrapper smoke check.
+#
+# Compiles sdl_hello2.rb and sdl_shapes.rb (both use the friendly
+# wrapper in examples/sdl2.rb) and verifies each reaches its main
+# loop. Skipped if SDL2 isn't installed.
+#
+# Usage: sh test/ffi/check_sdl_friendly.sh
+# Exit 0 on pass (or skip), non-zero on failure.
+
+set -e
+DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "$DIR"
+
+if ! pkg-config --exists sdl2 2>/dev/null; then
+  echo "ffi sdl friendly check SKIPPED (SDL2 not installed)"
+  exit 0
+fi
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+check_one() {
+  src=$1
+  expected_startup=$2
+  bin="$TMP/$(basename "$src" .rb)"
+  ./spinel "$src" -o "$bin" >/dev/null 2>&1
+  if ! ldd "$bin" | grep -q libSDL2; then
+    echo "FAIL: $src did not link libSDL2"
+    exit 1
+  fi
+  out=$(timeout 2 "$bin" 2>&1 || true)
+  if ! echo "$out" | grep -q "$expected_startup"; then
+    echo "FAIL: $src did not print expected startup line"
+    echo "  expected: $expected_startup"
+    echo "  output:   $out"
+    exit 1
+  fi
+}
+
+check_one examples/sdl_hello2.rb "Window open"
+check_one examples/sdl_shapes.rb "Arrow keys"
+
+echo "ffi sdl friendly check OK (sdl_hello2 + sdl_shapes)"
