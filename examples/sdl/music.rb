@@ -10,9 +10,9 @@
 #   ESC     quit
 #
 # Build and run:
-#   ./spinel examples/sdl_music.rb && ./sdl_music
+#   ./spinel examples/sdl/music.rb && ./music
 
-require_relative "sdl2"
+require_relative "../sdl2"
 
 # ----------------------------------------------------------------------------
 # Audio constants

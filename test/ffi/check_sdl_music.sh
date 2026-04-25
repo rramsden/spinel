@@ -1,7 +1,7 @@
 #!/bin/sh
 # SDL2 audio + waveform demo smoke check.
 #
-# Compiles sdl_music.rb and verifies:
+# Compiles examples/sdl/music.rb and verifies:
 #   - codegen + link succeed
 #   - libSDL2 dynamically linked
 #   - the synth loop runs (expected "Synthesis done." output)
@@ -25,25 +25,25 @@ fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-./spinel examples/sdl_music.rb -o "$TMP/sdl_music" >/dev/null 2>&1
+./spinel examples/sdl/music.rb -o "$TMP/music" >/dev/null 2>&1
 
-if ! ldd "$TMP/sdl_music" | grep -q libSDL2; then
-  echo "FAIL: sdl_music did not link libSDL2"
+if ! ldd "$TMP/music" | grep -q libSDL2; then
+  echo "FAIL: music did not link libSDL2"
   exit 1
 fi
 
-out=$(timeout 3 "$TMP/sdl_music" 2>&1 || true)
+out=$(timeout 3 "$TMP/music" 2>&1 || true)
 if ! echo "$out" | grep -q "Synthesis done"; then
-  echo "FAIL: sdl_music did not complete PCM synthesis"
+  echo "FAIL: music did not complete PCM synthesis"
   echo "Output was:"
   echo "$out"
   exit 1
 fi
 if ! echo "$out" | grep -q "Playing"; then
-  echo "FAIL: sdl_music did not open audio"
+  echo "FAIL: music did not open audio"
   echo "Output was:"
   echo "$out"
   exit 1
 fi
 
-echo "ffi sdl music check OK (sdl_music synthesizes + opens audio)"
+echo "ffi sdl music check OK (music synthesizes + opens audio)"

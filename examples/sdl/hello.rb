@@ -3,9 +3,9 @@
 # ~20 lines of real program code vs ~60 for the raw version.
 #
 # Build and run:
-#   ./spinel examples/sdl_hello2.rb && ./sdl_hello2
+#   ./spinel examples/sdl/hello.rb && ./hello
 
-require_relative "sdl2"
+require_relative "../sdl2"
 
 app = sdl_open("Spinel + SDL2 (friendly)", 640, 480)
 if app == nil

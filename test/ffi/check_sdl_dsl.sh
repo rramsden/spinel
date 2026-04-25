@@ -1,11 +1,12 @@
 #!/bin/sh
-# Friendly SDL wrapper smoke check.
+# SDL2 DSL smoke check.
 #
-# Compiles sdl_hello2.rb and sdl_shapes.rb (both use the friendly
-# wrapper in examples/sdl2.rb) and verifies each reaches its main
-# loop. Skipped if SDL2 isn't installed.
+# Compiles examples/sdl/hello.rb and examples/sdl/shapes.rb (both use
+# the friendly SdlApp wrapper in examples/sdl2.rb) and verifies each
+# links libSDL2 and reaches its main loop. Skipped if SDL2 isn't
+# installed.
 #
-# Usage: sh test/ffi/check_sdl_friendly.sh
+# Usage: sh test/ffi/check_sdl_dsl.sh
 # Exit 0 on pass (or skip), non-zero on failure.
 
 set -e
@@ -13,7 +14,7 @@ DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$DIR"
 
 if ! pkg-config --exists sdl2 2>/dev/null; then
-  echo "ffi sdl friendly check SKIPPED (SDL2 not installed)"
+  echo "ffi sdl dsl check SKIPPED (SDL2 not installed)"
   exit 0
 fi
 
@@ -38,7 +39,7 @@ check_one() {
   fi
 }
 
-check_one examples/sdl_hello2.rb "Window open"
-check_one examples/sdl_shapes.rb "Arrow keys"
+check_one examples/sdl/hello.rb  "Window open"
+check_one examples/sdl/shapes.rb "Arrow keys"
 
-echo "ffi sdl friendly check OK (sdl_hello2 + sdl_shapes)"
+echo "ffi sdl dsl check OK (hello + shapes)"
