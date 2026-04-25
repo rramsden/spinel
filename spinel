@@ -166,6 +166,11 @@ if grep -q 're_compile' "$C_FILE" 2>/dev/null && [ ! -f "$SP_RT_LIB" ] && [ -f "
   EXTRA_FLAGS="$EXTRA_FLAGS $RE_LIB"
 fi
 INCLUDE_FLAGS="$INCLUDE_FLAGS -I$DIR/lib/regexp"
+# Scrape FFI link/cflag markers emitted by the codegen. Each line looks
+# like "/* SPINEL_LINK: -lSDL2 */" or "/* SPINEL_CFLAGS: -I/foo */".
+# These come from ffi_lib / ffi_cflags declarations.
+FFI_LINKS=$(sed -n 's|^/\* SPINEL_LINK: \(.*\) \*/$|\1|p' "$C_FILE" | tr '\n' ' ')
+FFI_CFLAGS=$(sed -n 's|^/\* SPINEL_CFLAGS: \(.*\) \*/$|\1|p' "$C_FILE" | tr '\n' ' ')
 if [ "$(uname -s)" = "Darwin" ]; then
   GC_FLAG="-Wl,-dead_strip"
 else
@@ -177,7 +182,7 @@ case "$(uname -s 2>/dev/null)" in
   MINGW*|MSYS*|CYGWIN*) EXTRA_FLAGS="$EXTRA_FLAGS -Wl,--stack,67108864" ;;
 esac
 
-$CC_CMD -O${OPT_LEVEL} -Wno-all -ffunction-sections -fdata-sections $INCLUDE_FLAGS "$C_FILE" -lm $EXTRA_FLAGS $GC_FLAG -o "$BIN_FILE"
+$CC_CMD -O${OPT_LEVEL} -Wno-all -ffunction-sections -fdata-sections $INCLUDE_FLAGS $FFI_CFLAGS "$C_FILE" -lm $EXTRA_FLAGS $FFI_LINKS $GC_FLAG -o "$BIN_FILE"
 if [ $? -ne 0 ]; then
   echo "spinel: C compilation failed" >&2
   exit 1
