@@ -143,6 +143,50 @@ module SDL
   # `type` is at offset 0; SDL_KeyboardEvent.keysym.sym at offset 20.
   ffi_read_u32 :event_type_raw, 0
   ffi_read_u32 :event_key_sym_raw, 20
+
+  # --- Audio ---
+  # Audio format constants.
+  ffi_const :AUDIO_S16LSB, 0x8010       # signed 16-bit little endian
+  ffi_const :AUDIO_S16SYS, 0x8010       # same on x86_64 (LE host)
+
+  # Queue-based audio API. Leaves callback=NULL in the spec.
+  ffi_func :SDL_OpenAudio,          [:ptr, :ptr],                             :int
+  ffi_func :SDL_CloseAudio,         [],                                       :void
+  ffi_func :SDL_PauseAudio,         [:int],                                   :void
+  ffi_func :SDL_QueueAudio,         [:uint32, :ptr, :uint32],                 :int
+  ffi_func :SDL_GetQueuedAudioSize, [:uint32],                                :uint32
+  ffi_func :SDL_ClearQueuedAudio,   [:uint32],                                :void
+
+  # SDL_AudioSpec is 32 bytes. Layout (x86_64):
+  #   freq     : int     @ 0
+  #   format   : uint16  @ 4
+  #   channels : uint8   @ 6
+  #   silence  : uint8   @ 7  (output: filled by SDL on open)
+  #   samples  : uint16  @ 8
+  #   padding  : uint16  @ 10
+  #   size     : uint32  @ 12 (output: filled by SDL on open)
+  #   callback : fnptr   @ 16 (left NULL for queue API)
+  #   userdata : ptr     @ 24 (left NULL)
+  ffi_buffer :audio_spec_desired,  32
+  ffi_buffer :audio_spec_obtained, 32
+  ffi_write_i32 :aspec_set_freq,     0
+  ffi_write_u16 :aspec_set_format,   4
+  ffi_write_u8  :aspec_set_channels, 6
+  ffi_write_u16 :aspec_set_samples,  8
+  ffi_write_ptr :aspec_set_callback, 16
+  ffi_write_ptr :aspec_set_userdata, 24
+  ffi_read_i32  :aspec_get_freq,     0
+  ffi_read_u32  :aspec_get_size,     12
+
+  # A scratch PCM buffer the caller can fill with samples. Sized for
+  # ~1 second of signed 16-bit mono at 44.1 kHz = 44100 samples = 88200 bytes.
+  # Users needing larger buffers can declare their own ffi_buffer.
+  ffi_buffer :audio_pcm, 88200
+  # 16-bit signed sample accessors. Use 3-arg form for array access:
+  #   SDL.pcm_set_s16(SDL.audio_pcm, i, value)
+  #   SDL.pcm_get_s16(SDL.audio_pcm, i)
+  ffi_write_i16 :pcm_set_s16, 0
+  ffi_read_i16  :pcm_get_s16, 0
 end
 
 # =============================================================================
@@ -255,6 +299,58 @@ class SdlApp
       SDL.SDL_Delay(@frame_delay_ms)
     end
     0
+  end
+
+  # --- Audio (queue-based, callback-free) ---
+
+  # Open the default audio device with the given format. Returns 0 on
+  # success, -1 on failure. After this call, `play_audio` begins
+  # playback and `queue_audio(buf, bytes)` feeds samples.
+  #
+  # freq      : sample rate (e.g. 44100)
+  # format    : one of SDL::AUDIO_S16LSB, SDL::AUDIO_S16SYS
+  # channels  : 1 (mono) or 2 (stereo)
+  # samples   : audio buffer size in frames (e.g. 1024 or 4096)
+  def open_audio(freq, format, channels, samples)
+    if SDL.SDL_Init(SDL::INIT_AUDIO) != 0
+      return -1
+    end
+    spec = SDL.audio_spec_desired
+    SDL.aspec_set_freq(spec,     freq)
+    SDL.aspec_set_format(spec,   format)
+    SDL.aspec_set_channels(spec, channels)
+    SDL.aspec_set_samples(spec,  samples)
+    SDL.aspec_set_callback(spec, nil)   # NULL -> use queue API
+    SDL.aspec_set_userdata(spec, nil)
+    SDL.SDL_OpenAudio(spec, SDL.audio_spec_obtained)
+  end
+
+  def close_audio
+    SDL.SDL_CloseAudio
+    0
+  end
+
+  # Begin audio playback (unpause).
+  def play_audio
+    SDL.SDL_PauseAudio(0)
+    0
+  end
+
+  def pause_audio
+    SDL.SDL_PauseAudio(1)
+    0
+  end
+
+  # Queue `bytes` bytes of PCM data from `buf` onto device 1 (the
+  # default device opened by SDL_OpenAudio). Returns 0 on success.
+  def queue_audio(buf, bytes)
+    SDL.SDL_QueueAudio(1, buf, bytes)
+    0
+  end
+
+  # How many bytes are still queued (undrained) for playback.
+  def queued_audio_bytes
+    SDL.SDL_GetQueuedAudioSize(1)
   end
 
   # --- Drawing ---

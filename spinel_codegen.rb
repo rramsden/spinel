@@ -318,6 +318,11 @@ class Compiler
     @ffi_reader_names = "".split(",")
     @ffi_reader_kinds = "".split(",")     # "u32", "i32", "ptr"
     @ffi_reader_offsets = []              # int array
+    # Flat writer registry (one entry per ffi_write_* decl):
+    @ffi_writer_modules = "".split(",")
+    @ffi_writer_names = "".split(",")
+    @ffi_writer_kinds = "".split(",")     # "u32","i32","u16","i16","u8","i8","ptr"
+    @ffi_writer_offsets = []              # int array
 
     @pending_method_ref = ""
     @lambda_counter = 0
@@ -3750,6 +3755,18 @@ class Compiler
     -1
   end
 
+  # Look up an FFI writer by module and method name.
+  def ffi_find_writer(mod_name, w_name)
+    k = 0
+    while k < @ffi_writer_names.length
+      if @ffi_writer_modules[k] == mod_name && @ffi_writer_names[k] == w_name
+        return k
+      end
+      k = k + 1
+    end
+    -1
+  end
+
   # Type inference for FFI method calls. Returns the declared return
   # type (Spinel token) for a ConstantReadNode-receiver call matching
   # a registered ffi_func/ffi_buffer/ffi_read_*, or "" otherwise.
@@ -3776,6 +3793,13 @@ class Compiler
         return "ptr"
       end
       # u32, i32 → int
+      return "int"
+    end
+    wi = ffi_find_writer(rcname, mname)
+    if wi >= 0
+      # Writers are statements that return 0 (int) so a caller using
+      # them in a case/if gets something predictable. Could return
+      # "void" but "int" flows more naturally through inference.
       return "int"
     end
     ""
@@ -7206,10 +7230,9 @@ class Compiler
       return
     end
 
-    if dname == "ffi_read_u32" || dname == "ffi_read_i32" || dname == "ffi_read_ptr"
-      # ffi_read_u32 :name, <offset>
-      # (Keyword-arg form :at => offset is out of scope; positional only
-      # in MVP for Spinel-subset compatibility.)
+    if dname == "ffi_read_u32" || dname == "ffi_read_i32" || dname == "ffi_read_u16" || dname == "ffi_read_i16" || dname == "ffi_read_u8" || dname == "ffi_read_i8" || dname == "ffi_read_ptr"
+      # ffi_read_<kind> :name, <offset>
+      # Kinds: u32, i32, u16, i16, u8, i8, ptr.
       if args.length != 2
         ffi_error(mname, dname, "expected 2 args (name, byte offset)")
       end
@@ -7221,11 +7244,33 @@ class Compiler
       if roff < 0
         ffi_error(mname, dname, "second arg must be a non-negative integer offset")
       end
-      kind = dname[9, dname.length - 9]  # "u32" | "i32" | "ptr"
+      kind = dname[9, dname.length - 9]  # strip "ffi_read_"
       @ffi_reader_modules.push(mname)
       @ffi_reader_names.push(rname)
       @ffi_reader_kinds.push(kind)
       @ffi_reader_offsets.push(roff)
+      return
+    end
+
+    # ffi_write_u32 :name, <offset>  — mirror of ffi_read_*.
+    # Kinds: u32, i32, u16, i16, u8, i8, ptr.
+    if dname == "ffi_write_u32" || dname == "ffi_write_i32" || dname == "ffi_write_u16" || dname == "ffi_write_i16" || dname == "ffi_write_u8" || dname == "ffi_write_i8" || dname == "ffi_write_ptr"
+      if args.length != 2
+        ffi_error(mname, dname, "expected 2 args (name, byte offset)")
+      end
+      wname = ffi_arg_str(args[0])
+      if wname == ""
+        ffi_error(mname, dname, "first arg must be a symbol (writer name)")
+      end
+      woff = ffi_arg_int(args[1])
+      if woff < 0
+        ffi_error(mname, dname, "second arg must be a non-negative integer offset")
+      end
+      wkind = dname[10, dname.length - 10]  # strip "ffi_write_"
+      @ffi_writer_modules.push(mname)
+      @ffi_writer_names.push(wname)
+      @ffi_writer_kinds.push(wkind)
+      @ffi_writer_offsets.push(woff)
       return
     end
 
@@ -7308,6 +7353,10 @@ class Compiler
     if ri >= 0
       return compile_ffi_reader_call(nid, ri)
     end
+    wi = ffi_find_writer(rcname, mname)
+    if wi >= 0
+      return compile_ffi_writer_call(nid, wi)
+    end
     ""
   end
 
@@ -7358,29 +7407,109 @@ class Compiler
     result
   end
 
-  # Emit a field-read from a buffer. The reader was declared as
-  # ffi_read_u32 :event_type, 0 — takes one arg at the call site: the
-  # buffer (void *). Generates "(*(uint32_t*)((char*)arg + 0))".
+  # Emit a field-read from a buffer. Two call forms:
+  #   - 1 arg  (buf)         -> reads at declared offset
+  #   - 2 args (buf, index)  -> reads at declared_off + index*sizeof(kind)
   def compile_ffi_reader_call(nid, ri)
     args_id = @nd_arguments[nid]
     call_args = []
     if args_id >= 0
       call_args = get_args(args_id)
     end
-    if call_args.length != 1
-      $stderr.puts "FFI error: " + @ffi_reader_names[ri] + ": reader takes exactly 1 arg (the buffer)"
+    if call_args.length != 1 && call_args.length != 2
+      $stderr.puts "FFI error: " + @ffi_reader_names[ri] + ": reader takes 1 arg (buf) or 2 args (buf, index)"
       exit(1)
     end
     off = @ffi_reader_offsets[ri]
     kind = @ffi_reader_kinds[ri]
     ctype = "uint32_t"
+    elem_size = 4
     if kind == "i32"
       ctype = "int32_t"
+      elem_size = 4
+    elsif kind == "u16"
+      ctype = "uint16_t"
+      elem_size = 2
+    elsif kind == "i16"
+      ctype = "int16_t"
+      elem_size = 2
+    elsif kind == "u8"
+      ctype = "uint8_t"
+      elem_size = 1
+    elsif kind == "i8"
+      ctype = "int8_t"
+      elem_size = 1
     elsif kind == "ptr"
       ctype = "void *"
+      elem_size = 8
     end
     buf_expr = compile_expr(call_args[0])
-    "((mrb_int)(*((" + ctype + " *)((char *)" + buf_expr + " + " + off.to_s + "))))"
+    if call_args.length == 1
+      offset_expr = off.to_s
+    else
+      idx_expr = compile_expr(call_args[1])
+      offset_expr = "(" + off.to_s + " + (" + idx_expr + ") * " + elem_size.to_s + ")"
+    end
+    if kind == "ptr"
+      return "((void *)(*((void * *)((char *)" + buf_expr + " + " + offset_expr + "))))"
+    end
+    "((mrb_int)(*((" + ctype + " *)((char *)" + buf_expr + " + " + offset_expr + "))))"
+  end
+
+  # Emit a field-write to a buffer. The writer was declared as e.g.
+  # ffi_write_i32 :set_freq, 0. Two call forms:
+  #   - 2 args (buf, value)            -> writes at declared offset
+  #   - 3 args (buf, index, value)     -> writes at declared_off + index*sizeof(kind)
+  # The 3-arg form enables array-style access without needing pointer
+  # arithmetic in Ruby (ptr type has no + operator).
+  def compile_ffi_writer_call(nid, wi)
+    args_id = @nd_arguments[nid]
+    call_args = []
+    if args_id >= 0
+      call_args = get_args(args_id)
+    end
+    if call_args.length != 2 && call_args.length != 3
+      $stderr.puts "FFI error: " + @ffi_writer_names[wi] + ": writer takes 2 args (buf, value) or 3 args (buf, index, value)"
+      exit(1)
+    end
+    off = @ffi_writer_offsets[wi]
+    kind = @ffi_writer_kinds[wi]
+    ctype = "uint32_t"
+    elem_size = 4
+    if kind == "i32"
+      ctype = "int32_t"
+      elem_size = 4
+    elsif kind == "u16"
+      ctype = "uint16_t"
+      elem_size = 2
+    elsif kind == "i16"
+      ctype = "int16_t"
+      elem_size = 2
+    elsif kind == "u8"
+      ctype = "uint8_t"
+      elem_size = 1
+    elsif kind == "i8"
+      ctype = "int8_t"
+      elem_size = 1
+    elsif kind == "ptr"
+      ctype = "void *"
+      elem_size = 8
+    end
+    buf_expr = compile_expr(call_args[0])
+    if call_args.length == 2
+      val_expr = compile_expr(call_args[1])
+      offset_expr = off.to_s
+    else
+      idx_expr = compile_expr(call_args[1])
+      val_expr = compile_expr(call_args[2])
+      offset_expr = "(" + off.to_s + " + (" + idx_expr + ") * " + elem_size.to_s + ")"
+    end
+    if kind == "ptr"
+      val_cast = "((void *)" + val_expr + ")"
+    else
+      val_cast = "((" + ctype + ")(" + val_expr + "))"
+    end
+    "((*(" + ctype + " *)((char *)" + buf_expr + " + " + offset_expr + ") = " + val_cast + "), (mrb_int)0)"
   end
 
   # Emit FFI prologue: link/cflag markers, extern prototypes, buffer
