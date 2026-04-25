@@ -295,6 +295,28 @@ class Compiler
     # slot falls through to the un-folded path.
     @module_acc_keys = "".split(",")
     @module_acc_consts = "".split(",")
+
+    # FFI state (commit #2: populated during collect_module; not yet
+    # consumed by any dispatch/emit. Empty for any non-FFI program.)
+    # Per-module registry (parallel arrays indexed by module entry):
+    @ffi_modules = "".split(",")          # module names that declared FFI
+    @ffi_module_libs = "".split(",")      # ";"-joined -l flags
+    @ffi_module_cflags = "".split(",")    # ";"-joined cc flags
+    # Flat function registry (one entry per ffi_func decl):
+    @ffi_func_modules = "".split(",")     # owning module name
+    @ffi_func_names = "".split(",")       # C symbol name
+    @ffi_func_arg_types = "".split(",")   # ";"-joined spinel type tokens
+    @ffi_func_ret_types = "".split(",")   # single spinel type token
+    # Flat buffer registry (one entry per ffi_buffer decl):
+    @ffi_buf_modules = "".split(",")
+    @ffi_buf_names = "".split(",")
+    @ffi_buf_sizes = []                   # int array
+    # Flat reader registry (one entry per ffi_read_* decl):
+    @ffi_reader_modules = "".split(",")
+    @ffi_reader_names = "".split(",")
+    @ffi_reader_kinds = "".split(",")     # "u32", "i32", "ptr"
+    @ffi_reader_offsets = []              # int array
+
     @pending_method_ref = ""
     @lambda_counter = 0
     @lambda_funcs = ""
@@ -6892,7 +6914,237 @@ class Compiler
           }
         end
       end
+      # FFI DSL: ffi_lib, ffi_cflags, ffi_func, ffi_const, ffi_buffer,
+      # ffi_read_u32, ffi_read_i32, ffi_read_ptr. Bare CallNode with no
+      # explicit receiver whose name starts with "ffi_".
+      if @nd_type[sid] == "CallNode"
+        if @nd_receiver[sid] < 0
+          cname_ffi = @nd_name[sid]
+          if cname_ffi.length >= 4 && cname_ffi[0, 4] == "ffi_"
+            scan_ffi_decl(mname, sid)
+          end
+        end
+      end
     }
+  end
+
+  # Return the module's index in @ffi_modules, creating an entry if missing.
+  def ffi_module_idx(mname)
+    i = 0
+    while i < @ffi_modules.length
+      if @ffi_modules[i] == mname
+        return i
+      end
+      i = i + 1
+    end
+    @ffi_modules.push(mname)
+    @ffi_module_libs.push("")
+    @ffi_module_cflags.push("")
+    @ffi_modules.length - 1
+  end
+
+  # Map an FFI type-spec symbol (e.g. "uint32", "str", "ptr") to a Spinel
+  # type token ("int", "string", "ptr"). Returns "" on unknown input.
+  def ffi_type_of(spec)
+    if spec == "int" || spec == "uint32" || spec == "int32" || spec == "uint16" || spec == "int16" || spec == "uint8" || spec == "int8" || spec == "size_t" || spec == "long"
+      return "int"
+    end
+    if spec == "float" || spec == "double"
+      return "float"
+    end
+    if spec == "bool"
+      return "bool"
+    end
+    if spec == "str"
+      return "string"
+    end
+    if spec == "ptr"
+      return "ptr"
+    end
+    if spec == "void"
+      return "void"
+    end
+    ""
+  end
+
+  # Extract a string literal from a SymbolNode or StringNode arg. Returns
+  # "" if the arg is not a literal we recognize.
+  def ffi_arg_str(nid)
+    if nid < 0
+      return ""
+    end
+    t = @nd_type[nid]
+    if t == "SymbolNode" || t == "StringNode"
+      return @nd_content[nid]
+    end
+    ""
+  end
+
+  # Extract an integer from an IntegerNode arg. Returns -1 on non-int.
+  # (Sizes and offsets are always non-negative in practice, so -1 is a
+  # safe sentinel.)
+  def ffi_arg_int(nid)
+    if nid < 0
+      return -1
+    end
+    if @nd_type[nid] == "IntegerNode"
+      return @nd_value[nid]
+    end
+    -1
+  end
+
+  # Emit an FFI decl error and abort. Gives users a pointed message
+  # instead of silently ignoring a malformed decl.
+  def ffi_error(mname, dname, msg)
+    $stderr.puts "FFI error in module " + mname + ": " + dname + ": " + msg
+    exit(1)
+  end
+
+  # Dispatch on the specific ffi_* declaration. Called once per recognized
+  # CallNode in a module body.
+  def scan_ffi_decl(mname, nid)
+    dname = @nd_name[nid]
+    args_id = @nd_arguments[nid]
+    args = []
+    if args_id >= 0
+      args = get_args(args_id)
+    end
+    mi = ffi_module_idx(mname)
+
+    if dname == "ffi_lib"
+      if args.length != 1
+        ffi_error(mname, dname, "expected 1 arg (library name)")
+      end
+      libname = ffi_arg_str(args[0])
+      if libname == ""
+        ffi_error(mname, dname, "argument must be a string or symbol literal")
+      end
+      if @ffi_module_libs[mi] == ""
+        @ffi_module_libs[mi] = libname
+      else
+        @ffi_module_libs[mi] = @ffi_module_libs[mi] + ";" + libname
+      end
+      return
+    end
+
+    if dname == "ffi_cflags"
+      if args.length != 1
+        ffi_error(mname, dname, "expected 1 arg (cflags string)")
+      end
+      flags = ffi_arg_str(args[0])
+      if flags == ""
+        ffi_error(mname, dname, "argument must be a string literal")
+      end
+      if @ffi_module_cflags[mi] == ""
+        @ffi_module_cflags[mi] = flags
+      else
+        @ffi_module_cflags[mi] = @ffi_module_cflags[mi] + ";" + flags
+      end
+      return
+    end
+
+    if dname == "ffi_func"
+      # ffi_func :name, [:arg1, :arg2], :ret
+      if args.length != 3
+        ffi_error(mname, dname, "expected 3 args (name, [arg types], ret type)")
+      end
+      fname = ffi_arg_str(args[0])
+      if fname == ""
+        ffi_error(mname, dname, "first arg must be a symbol (function name)")
+      end
+      # Second arg: ArrayNode of symbols
+      if @nd_type[args[1]] != "ArrayNode"
+        ffi_error(mname, dname, "second arg must be an array literal of type symbols")
+      end
+      arg_elems = parse_id_list(@nd_elements[args[1]])
+      arg_toks = ""
+      k = 0
+      while k < arg_elems.length
+        spec = ffi_arg_str(arg_elems[k])
+        tok = ffi_type_of(spec)
+        if tok == "" || tok == "void"
+          ffi_error(mname, dname, "unknown or invalid arg type spec '" + spec + "' in " + fname)
+        end
+        if k > 0
+          arg_toks = arg_toks + ";"
+        end
+        arg_toks = arg_toks + tok
+        k = k + 1
+      end
+      ret_spec = ffi_arg_str(args[2])
+      ret_tok = ffi_type_of(ret_spec)
+      if ret_tok == ""
+        ffi_error(mname, dname, "unknown return type spec '" + ret_spec + "' in " + fname)
+      end
+      @ffi_func_modules.push(mname)
+      @ffi_func_names.push(fname)
+      @ffi_func_arg_types.push(arg_toks)
+      @ffi_func_ret_types.push(ret_tok)
+      return
+    end
+
+    if dname == "ffi_const"
+      # ffi_const :NAME, <int>
+      if args.length != 2
+        ffi_error(mname, dname, "expected 2 args (name, integer value)")
+      end
+      kname = ffi_arg_str(args[0])
+      if kname == ""
+        ffi_error(mname, dname, "first arg must be a symbol (constant name)")
+      end
+      # Reuse the existing module-constant storage for the value. This
+      # lets existing ConstantPathNode lookup code find it with no extra
+      # machinery. Convention: "<Module>_<NAME>" like ConstantWriteNode.
+      cname_full = mname + "_" + kname
+      @const_names.push(cname_full)
+      @const_types.push("int")
+      @const_expr_ids.push(args[1])
+      return
+    end
+
+    if dname == "ffi_buffer"
+      # ffi_buffer :name, <size>
+      if args.length != 2
+        ffi_error(mname, dname, "expected 2 args (name, size)")
+      end
+      bname = ffi_arg_str(args[0])
+      if bname == ""
+        ffi_error(mname, dname, "first arg must be a symbol (buffer name)")
+      end
+      bsize = ffi_arg_int(args[1])
+      if bsize <= 0
+        ffi_error(mname, dname, "second arg must be a positive integer size")
+      end
+      @ffi_buf_modules.push(mname)
+      @ffi_buf_names.push(bname)
+      @ffi_buf_sizes.push(bsize)
+      return
+    end
+
+    if dname == "ffi_read_u32" || dname == "ffi_read_i32" || dname == "ffi_read_ptr"
+      # ffi_read_u32 :name, <offset>
+      # (Keyword-arg form :at => offset is out of scope; positional only
+      # in MVP for Spinel-subset compatibility.)
+      if args.length != 2
+        ffi_error(mname, dname, "expected 2 args (name, byte offset)")
+      end
+      rname = ffi_arg_str(args[0])
+      if rname == ""
+        ffi_error(mname, dname, "first arg must be a symbol (reader name)")
+      end
+      roff = ffi_arg_int(args[1])
+      if roff < 0
+        ffi_error(mname, dname, "second arg must be a non-negative integer offset")
+      end
+      kind = dname[9, dname.length - 9]  # "u32" | "i32" | "ptr"
+      @ffi_reader_modules.push(mname)
+      @ffi_reader_names.push(rname)
+      @ffi_reader_kinds.push(kind)
+      @ffi_reader_offsets.push(roff)
+      return
+    end
+
+    ffi_error(mname, dname, "unknown FFI declaration")
   end
 
   def collect_constant(nid)
