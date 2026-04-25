@@ -1,8 +1,8 @@
 #!/bin/sh
 # SDL2 DSL smoke check.
 #
-# Compiles examples/sdl/hello.rb and examples/sdl/shapes.rb (both use
-# the friendly SdlApp wrapper in examples/sdl2.rb) and verifies each
+# Compiles examples/ffi/sdl/hello.rb and examples/ffi/sdl/shapes.rb (both use
+# the friendly SdlApp wrapper in examples/ffi/sdl/sdl2.rb) and verifies each
 # links libSDL2 and reaches its main loop. Skipped if SDL2 isn't
 # installed.
 #
@@ -39,7 +39,7 @@ check_one() {
   fi
 }
 
-check_one examples/sdl/hello.rb  "Window open"
-check_one examples/sdl/shapes.rb "Arrow keys"
+check_one examples/ffi/sdl/hello.rb  "Window open"
+check_one examples/ffi/sdl/shapes.rb "Arrow keys"
 
 echo "ffi sdl dsl check OK (hello + shapes)"

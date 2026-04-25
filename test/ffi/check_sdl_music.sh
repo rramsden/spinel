@@ -1,7 +1,7 @@
 #!/bin/sh
 # SDL2 audio + waveform demo smoke check.
 #
-# Compiles examples/sdl/music.rb and verifies:
+# Compiles examples/ffi/sdl/music.rb and verifies:
 #   - codegen + link succeed
 #   - libSDL2 dynamically linked
 #   - the synth loop runs (expected "Synthesis done." output)
@@ -25,7 +25,7 @@ fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-./spinel examples/sdl/music.rb -o "$TMP/music" >/dev/null 2>&1
+./spinel examples/ffi/sdl/music.rb -o "$TMP/music" >/dev/null 2>&1
 
 if ! ldd "$TMP/music" | grep -q libSDL2; then
   echo "FAIL: music did not link libSDL2"
