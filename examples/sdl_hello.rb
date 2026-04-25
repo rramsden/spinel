@@ -1,8 +1,13 @@
-# SDL2 hello-window demo via Spinel's FFI.
+# SDL2 hello-window demo using the *raw* FFI layer directly.
 #
-# Opens a 640x480 window, animates a solid color that pulses through
-# red/green/blue channels, and closes when you press ESC or click the
-# close button.
+# This shows what Spinel's FFI looks like without the friendly
+# SdlApp wrapper — every SDL call is visible. For a more compact
+# version using the wrapper, see examples/sdl_hello2.rb. For the
+# richer interactive shapes demo, see examples/sdl_shapes.rb.
+#
+# The FFI declarations (externs, constants, buffers) live in
+# examples/sdl2.rb — we `require_relative` it and then just ignore
+# the friendly classes on top.
 #
 # Build and run:
 #   ./spinel examples/sdl_hello.rb && ./sdl_hello
@@ -13,57 +18,12 @@
 #   SDL_VIDEODRIVER=x11 ./sdl_hello
 # to force the X11 backend through XWayland.
 
-module SDL
-  ffi_lib "SDL2"
-  ffi_cflags "-I/usr/include/SDL2"
-  ffi_cflags "-D_REENTRANT"
+require_relative "sdl2"
 
-  # Subsystem flags
-  ffi_const :INIT_VIDEO, 0x20
-
-  # Window position / flags
-  ffi_const :WINDOWPOS_CENTERED, 0x2fff0000
-  ffi_const :WINDOW_SHOWN,       4
-
-  # Renderer flags
-  ffi_const :RENDERER_ACCELERATED, 2
-  ffi_const :RENDERER_PRESENTVSYNC, 4
-
-  # Event types
-  ffi_const :QUIT,     256
-  ffi_const :KEYDOWN,  768
-
-  # Keycodes
-  ffi_const :K_ESCAPE, 27
-
-  # Core lifecycle
-  ffi_func :SDL_Init,           [:uint32],                                :int
-  ffi_func :SDL_Quit,           [],                                       :void
-  ffi_func :SDL_GetError,       [],                                       :str
-
-  # Window + renderer
-  ffi_func :SDL_CreateWindow,   [:str, :int, :int, :int, :int, :uint32],  :ptr
-  ffi_func :SDL_DestroyWindow,  [:ptr],                                   :void
-  ffi_func :SDL_CreateRenderer, [:ptr, :int, :uint32],                    :ptr
-  ffi_func :SDL_DestroyRenderer,[:ptr],                                   :void
-  ffi_func :SDL_SetRenderDrawColor, [:ptr, :int, :int, :int, :int],       :int
-  ffi_func :SDL_RenderClear,    [:ptr],                                   :int
-  ffi_func :SDL_RenderPresent,  [:ptr],                                   :void
-
-  # Event polling. SDL_Event is a 56-byte union; we reserve 64 for safety.
-  # type field is at offset 0 (Uint32). For SDL_KEYDOWN, keysym.sym sits
-  # at offset 20 (SDL_KeyboardEvent: type=0, timestamp=4, windowID=8,
-  # state=12, repeat=13, padding=14-15, keysym.scancode=16,
-  # keysym.sym=20).
-  ffi_func :SDL_PollEvent,      [:ptr],                                   :int
-  ffi_buffer :event_buf, 64
-  ffi_read_u32 :event_type, 0
-  ffi_read_u32 :event_key_sym, 20
-
-  # Timing
-  ffi_func :SDL_Delay,          [:uint32],                                :void
-  ffi_func :SDL_GetTicks,       [],                                       :uint32
-end
+# ----------------------------------------------------------------------------
+# Manually drive SDL via the raw FFI layer. No SdlApp, no SdlColor —
+# just the module SDL provided by examples/sdl2.rb.
+# ----------------------------------------------------------------------------
 
 if SDL.SDL_Init(SDL::INIT_VIDEO) != 0
   puts "SDL_Init failed: " + SDL.SDL_GetError
@@ -71,7 +31,7 @@ if SDL.SDL_Init(SDL::INIT_VIDEO) != 0
 end
 
 win = SDL.SDL_CreateWindow(
-  "Spinel + SDL2",
+  "Spinel + SDL2 (raw FFI)",
   SDL::WINDOWPOS_CENTERED, SDL::WINDOWPOS_CENTERED,
   640, 480,
   SDL::WINDOW_SHOWN)
@@ -95,23 +55,22 @@ buf = SDL.event_buf
 running = true
 frame = 0
 while running
-  # Drain the event queue.
+  # Drain the event queue via raw SDL_PollEvent.
   while SDL.SDL_PollEvent(buf) != 0
-    et = SDL.event_type(buf)
-    if et == SDL::QUIT
+    et = SDL.event_type_raw(buf)
+    if et == SDL::EVT_QUIT
       running = false
-    elsif et == SDL::KEYDOWN
-      if SDL.event_key_sym(buf) == SDL::K_ESCAPE
+    elsif et == SDL::EVT_KEYDOWN
+      if SDL.event_key_sym_raw(buf) == SDL::K_ESCAPE
         running = false
       end
     end
   end
 
-  # Pulse through RGB channels every ~3 seconds.
-  t = frame
-  r = (t)        % 256
-  g = (t * 2)    % 256
-  b = (t * 3)    % 256
+  # Pulse through RGB channels.
+  r = frame % 256
+  g = (frame * 2) % 256
+  b = (frame * 3) % 256
   SDL.SDL_SetRenderDrawColor(ren, r, g, b, 255)
   SDL.SDL_RenderClear(ren)
   SDL.SDL_RenderPresent(ren)
