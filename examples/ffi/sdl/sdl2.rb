@@ -128,6 +128,8 @@ module SDL
   ffi_func :SDL_SetWindowTitle,     [:ptr, :str],                             :void
   ffi_func :SDL_CreateRenderer,     [:ptr, :int, :uint32],                    :ptr
   ffi_func :SDL_DestroyRenderer,    [:ptr],                                   :void
+  ffi_func :SDL_malloc,             [:size_t],                                :ptr
+  ffi_func :SDL_free,               [:ptr],                                   :void
   ffi_func :SDL_SetRenderDrawColor, [:ptr, :int, :int, :int, :int],           :int
   ffi_func :SDL_RenderClear,        [:ptr],                                   :int
   ffi_func :SDL_RenderPresent,      [:ptr],                                   :void
@@ -141,6 +143,7 @@ module SDL
   ffi_func :SDL_FreeSurface,              [:ptr],                            :void
   ffi_func :SDL_DestroyTexture,           [:ptr],                            :void
   ffi_func :SDL_SetTextureColorMod,       [:ptr, :uint8, :uint8, :uint8],   :int
+  ffi_func :SDL_SetTextureAlphaMod,       [:ptr, :uint8],                   :int
   ffi_func :SDL_RenderCopy,               [:ptr, :ptr, :ptr, :ptr],          :int
 
   # --- Events ---
@@ -288,7 +291,7 @@ class SdlApp
     @last_key = 0           # SDL::K_UNKNOWN
     @running = true
     @quit_on_escape = true
-    @frame_delay_ms = 16
+    @frame_delay_ms = 0
   end
 
   # --- Lifecycle ---
@@ -442,6 +445,11 @@ class SdlApp
   def present
     SDL.SDL_RenderPresent(@renderer_ptr)
     0
+  end
+
+  def render_texture(texture, alpha, dst_rect)
+    SDL.SDL_SetTextureAlphaMod(texture, alpha)
+    SDL.SDL_RenderCopy(@renderer_ptr, texture, nil, dst_rect)
   end
 
   def draw_point(x, y)
