@@ -7294,6 +7294,16 @@ class Compiler
                       @cls_meth_ptypes[oci] = all_ptypes.join("|")
                     end
                   end
+                  # If still "int", check if param is passed straight to
+                  # an FFI call as a :str/:ptr arg — if so, propagate.
+                  if ptypes[pk] == "int"
+                    fpt = param_ffi_arg_type(bid, pnames[pk])
+                    if fpt != ""
+                      ptypes[pk] = fpt
+                      all_ptypes[j] = ptypes.join(",")
+                      @cls_meth_ptypes[oci] = all_ptypes.join("|")
+                    end
+                  end
                 end
               end
               pk = pk + 1
@@ -7332,6 +7342,18 @@ class Compiler
                   @meth_param_types[mi] = ptypes.join(",")
                 end
               end
+              # NOTE: We intentionally do NOT run the FFI-arg-type
+              # propagation pass (as we do for class methods above) on
+              # top-level methods here. Enabling it confuses Spinel's
+              # self-hosted bootstrap — running bin1 against the codegen
+              # source produces a subtly different AST walk for some
+              # recursive self-calls (e.g. benchmark/bm_tak.rb), turning
+              # `tak(tak(...), tak(...), tak(...))` into malformed C
+              # while the CRuby output remains correct. The upshot is
+              # that top-level FFI wrappers like `def foo(buf)` won't
+              # have their `buf` param promoted from `int` to `ptr`
+              # automatically — callers should pass typed locals so
+              # call-site unification still does the right thing.
             end
           end
           pk = pk + 1
@@ -7714,6 +7736,108 @@ class Compiler
       k = k + 1
     end
     return 1
+  end
+
+  # Walk `nid` looking for an FFI call (Mod.fn(...) where Mod is an
+  # FFI module and fn is a registered ffi_func) whose argument at some
+  # position is a LocalVariableReadNode referring to `pname`. If found,
+  # return the spinel type corresponding to that argument's declared
+  # FFI spec:
+  #   "str"   → "string"
+  #   "ptr"   → "ptr"
+  # Other specs (int/uint/etc.) don't carry useful type info for
+  # Spinel's param inference (they all map to mrb_int) so we ignore
+  # them and keep looking. Returns "" if no such call is found.
+  def param_ffi_arg_type(nid, pname)
+    if nid < 0
+      return ""
+    end
+    if @nd_type[nid] == "CallNode"
+      recv = @nd_receiver[nid]
+      if recv >= 0 && @nd_type[recv] == "ConstantReadNode"
+        fi = ffi_find_func(@nd_name[recv], @nd_name[nid])
+        if fi >= 0
+          arg_specs = @ffi_func_arg_specs[fi].split(";")
+          args_id = @nd_arguments[nid]
+          if args_id >= 0
+            call_args = get_args(args_id)
+            k = 0
+            while k < call_args.length
+              if k < arg_specs.length
+                if @nd_type[call_args[k]] == "LocalVariableReadNode"
+                  if @nd_name[call_args[k]] == pname
+                    spec = arg_specs[k]
+                    if spec == "str"
+                      return "string"
+                    end
+                    if spec == "ptr"
+                      return "ptr"
+                    end
+                  end
+                end
+              end
+              k = k + 1
+            end
+          end
+        end
+      end
+    end
+    # Recurse into common child slots
+    if @nd_body[nid] >= 0
+      r = param_ffi_arg_type(@nd_body[nid], pname)
+      if r != ""
+        return r
+      end
+    end
+    stmts = parse_id_list(@nd_stmts[nid])
+    k = 0
+    while k < stmts.length
+      r = param_ffi_arg_type(stmts[k], pname)
+      if r != ""
+        return r
+      end
+      k = k + 1
+    end
+    if @nd_expression[nid] >= 0
+      r = param_ffi_arg_type(@nd_expression[nid], pname)
+      if r != ""
+        return r
+      end
+    end
+    if @nd_left[nid] >= 0
+      r = param_ffi_arg_type(@nd_left[nid], pname)
+      if r != ""
+        return r
+      end
+    end
+    if @nd_right[nid] >= 0
+      r = param_ffi_arg_type(@nd_right[nid], pname)
+      if r != ""
+        return r
+      end
+    end
+    if @nd_arguments[nid] >= 0
+      r = param_ffi_arg_type(@nd_arguments[nid], pname)
+      if r != ""
+        return r
+      end
+    end
+    args = parse_id_list(@nd_args[nid])
+    k = 0
+    while k < args.length
+      r = param_ffi_arg_type(args[k], pname)
+      if r != ""
+        return r
+      end
+      k = k + 1
+    end
+    if @nd_receiver[nid] >= 0
+      r = param_ffi_arg_type(@nd_receiver[nid], pname)
+      if r != ""
+        return r
+      end
+    end
+    ""
   end
 
   def infer_ivar_types_from_writers
@@ -8406,7 +8530,12 @@ class Compiler
               end
             end
             if k < ptypes.length
-              ptypes[k] = pt
+              if ptypes[k] == "int"
+                ptypes[k] = pt
+              elsif pt != "int"
+                ptypes[k] = pt
+              end
+              pt = ptypes[k]
             end
             declare_var(pnames[k], pt)
             k = k + 1
@@ -14178,7 +14307,30 @@ class Compiler
       return "self"
     end
     if t == "LocalVariableReadNode"
-      return fiber_var_ref(@nd_name[nid])
+      lvr_name = @nd_name[nid]
+      lvr_ref = fiber_var_ref(lvr_name)
+      # In main with setjmp, all locals are emitted as `volatile` so
+      # their values survive a longjmp. Most reads are fine, but when
+      # such a local of pointer type flows into a function argument
+      # the C compiler warns that the call discards the `volatile`
+      # qualifier. Cast here to strip volatile for pointer-typed reads;
+      # integer reads get implicit conversion (silent) and lvalue
+      # contexts (&v in SP_GC_ROOT, LocalVariableWriteNode) don't go
+      # through this path.
+      #
+      # type_is_pointer excludes the raw "ptr" type (FFI `void *`),
+      # since it's deliberately untracked by the GC — but the same
+      # `volatile void *` → `void *` warning applies, so we check for
+      # "ptr" explicitly too.
+      if @in_main == 1 && @needs_setjmp == 1
+        lvr_type = find_var_type(lvr_name)
+        if lvr_type != ""
+          if type_is_pointer(lvr_type) == 1 || lvr_type == "ptr"
+            return "((" + c_type(lvr_type) + ")" + lvr_ref + ")"
+          end
+        end
+      end
+      return lvr_ref
     end
     if t == "InstanceVariableReadNode"
       # Check if we're in a module class method
@@ -15963,18 +16115,21 @@ class Compiler
         if owner != ""
           ca = compile_call_args(nid)
           rc = compile_expr_gc_rooted(recv)
-          if owner == cname
-            if ca != ""
-              return "sp_" + owner + "_" + sanitize_name(mname) + "(" + rc + ", " + ca + ")"
-            else
-              return "sp_" + owner + "_" + sanitize_name(mname) + "(" + rc + ")"
-            end
+          # Cast the receiver to the owner-class pointer type. This
+          # drops any `volatile` qualifier picked up from exception
+          # scopes (locals modified between setjmp/longjmp are emitted
+          # as `volatile`) and, when owner != cname, aligns the type
+          # with an inherited parent-class method signature. Value-
+          # typed classes pass `self` by value (not by pointer), so
+          # they can't and don't need such a cast.
+          rc_cast = rc
+          if @cls_is_value_type[ci] == 0
+            rc_cast = "(sp_" + owner + " *)" + rc
+          end
+          if ca != ""
+            return "sp_" + owner + "_" + sanitize_name(mname) + "(" + rc_cast + ", " + ca + ")"
           else
-            if ca != ""
-              return "sp_" + owner + "_" + sanitize_name(mname) + "((sp_" + owner + " *)" + rc + ", " + ca + ")"
-            else
-              return "sp_" + owner + "_" + sanitize_name(mname) + "((sp_" + owner + " *)" + rc + ")"
-            end
+            return "sp_" + owner + "_" + sanitize_name(mname) + "(" + rc_cast + ")"
           end
         else
           # Check if class has <=> (Comparable) for comparison operators
@@ -18786,12 +18941,22 @@ class Compiler
         if @cls_is_value_type[ci] == 1
           arrow = "."
         end
+        # Cast through the owner-class pointer so field reads/writes
+        # drop any `volatile` qualifier the receiver picked up from an
+        # exception scope (see compile_object_method_expr method-call
+        # branch below for the matching rationale). For value-typed
+        # receivers (`arrow == "."`) we leave `rc` untouched since
+        # there's no pointer involved.
+        rc_cast = rc
+        if arrow == "->"
+          rc_cast = "((sp_" + cname + " *)" + rc + ")"
+        end
         # attr_reader
         readers = @cls_attr_readers[ci].split(";")
         j = 0
         while j < readers.length
           if readers[j] == mname
-            return rc + arrow + sanitize_ivar(mname)
+            return rc_cast + arrow + sanitize_ivar(mname)
           end
           j = j + 1
         end
@@ -18803,7 +18968,7 @@ class Compiler
             j = 0
             while j < writers.length
               if writers[j] == bname
-                return "(" + rc + arrow + sanitize_ivar(bname) + " = " + compile_arg0(nid) + ", 0)"
+                return "(" + rc_cast + arrow + sanitize_ivar(bname) + " = " + compile_arg0(nid) + ", 0)"
               end
               j = j + 1
             end
@@ -18838,11 +19003,18 @@ class Compiler
             end
           end
           tail = build_call_tail(ca, bp)
-          if owner == cname
-            return "sp_" + owner + "_" + sanitize_name(mname) + "(" + rc + tail + ")"
-          else
-            return "sp_" + owner + "_" + sanitize_name(mname) + "((sp_" + owner + " *)" + rc + tail + ")"
+          # Cast the receiver to the owner-class pointer type. This
+          # drops any `volatile` qualifier picked up from exception
+          # scopes (locals modified between setjmp/longjmp are emitted
+          # as `volatile`) and, when owner != cname, aligns the type
+          # with an inherited parent-class method signature. Value-
+          # typed classes pass `self` by value (not by pointer), so
+          # they can't and don't need such a cast.
+          rc_cast2 = rc
+          if @cls_is_value_type[ci] == 0
+            rc_cast2 = "(sp_" + owner + " *)" + rc
           end
+          return "sp_" + owner + "_" + sanitize_name(mname) + "(" + rc_cast2 + tail + ")"
         end
       end
     end

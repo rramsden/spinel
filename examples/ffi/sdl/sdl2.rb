@@ -489,7 +489,7 @@ end
 
 # Initialize SDL video, create a window + renderer, return an SdlApp.
 # Returns nil on failure; caller should check and print SDL.SDL_GetError.
-def sdl_open(title, width, height)
+def sdl_open(title, width, height, vsync: true)
   if SDL.SDL_Init(SDL::INIT_VIDEO) != 0
     return nil
   end
@@ -500,7 +500,11 @@ def sdl_open(title, width, height)
     SDL.SDL_Quit
     return nil
   end
-  ren = SDL.SDL_CreateRenderer(win, -1, SDL::RENDERER_ACCELERATED)
+  flags = SDL::RENDERER_ACCELERATED
+  if vsync
+    flags |= SDL::RENDERER_PRESENTVSYNC
+  end
+  ren = SDL.SDL_CreateRenderer(win, -1, flags)
   if ren == nil
     SDL.SDL_DestroyWindow(win)
     SDL.SDL_Quit
