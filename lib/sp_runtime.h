@@ -98,7 +98,6 @@ static char *sp_str_alloc(size_t len) {
   h->next = sp_str_heap;
   h->size = total;
   sp_str_heap = h;
-  sp_gc_bytes += total;
   char *body = (char *)(h + 1);
   body[0] = (char)0xfe;
   body[1 + len] = 0;
@@ -148,7 +147,6 @@ static void sp_str_sweep(void) {
       pp = &h->next;
     } else {
       *pp = h->next;
-      sp_gc_bytes -= h->size;
       free(h);
     }
   }
