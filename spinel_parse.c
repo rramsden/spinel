@@ -211,6 +211,12 @@ static int flatten(pm_node_t *node) {
     if (PM_NODE_FLAG_P(node, PM_CALL_NODE_FLAGS_SAFE_NAVIGATION)) {
       S("call_operator", escape_str((const uint8_t *)"&.", 2));
     }
+    /* Source line — surfaced by codegen's unresolved-call warning so
+       the user sees a file:line, not just a method name. */
+    {
+      int32_t cline = pm_newline_list_line(&g_parser->newline_list, node->location.start, g_parser->start_line);
+      I("line", (long long)cline);
+    }
     break;
   }
   case PM_CONSTANT_WRITE_NODE: {
@@ -1175,6 +1181,14 @@ int main(int argc, char **argv) {
     }
   }
 
+  /* Source path — codegen reads this so unresolved-call warnings can
+     print `<file>:<line>:`. Escape so spaces/special chars round-trip
+     through the same `%XX` decoder used for string fields. */
+  {
+    char *esc_path = escape_str((const uint8_t *)source_file, strlen(source_file));
+    fprintf(out, "FILE %s\n", esc_path);
+    free(esc_path);
+  }
   fprintf(out, "ROOT %d\n", root_id);
   for (int i = 0; i < line_count; i++) {
     fprintf(out, "%s\n", lines[i]);

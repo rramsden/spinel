@@ -49,6 +49,9 @@ class Compiler
     @nd_value = []
     @nd_content = "".split(",")
     @nd_flags = []
+    # Source-line for nodes that carry one (today: CallNode, used by the
+    # unresolved-call warning). -1 means "no line recorded".
+    @nd_line = []
     @nd_operator = "".split(",")
     @nd_binop = "".split(",")
     @nd_callop = "".split(",")
@@ -96,6 +99,12 @@ class Compiler
     # Issue: unresolved-call warnings deduped by "<mname>:<recv_type>"
     # so a hot call site that fails to resolve emits one warning, not N.
     @unresolved_call_warnings = "".split(",")
+
+    # Source path that the parser was invoked on. Stored on a `FILE`
+    # header line at the top of the AST text format and surfaced in the
+    # unresolved-call warning so the user sees `<file>:<line>:` rather
+    # than a bare method name.
+    @source_file = ""
 
     # ---- Top-level methods (parallel arrays) ----
     @meth_names = "".split(",")
@@ -389,6 +398,7 @@ class Compiler
     @nd_value.push(0)
     @nd_content.push("")
     @nd_flags.push(0)
+    @nd_line.push(-1)
     @nd_operator.push("")
     @nd_binop.push("")
     @nd_callop.push("")
@@ -441,6 +451,9 @@ class Compiler
         if parts.length >= 2
           if parts.first == "ROOT"
             @root_id = parts[1].to_i
+          end
+          if parts.first == "FILE"
+            @source_file = unescape_str(parts[1])
           end
           if parts.first == "N"
             nid = parts[1].to_i
@@ -605,6 +618,9 @@ class Compiler
     end
     if field == "start_line"
       @nd_value[nid] = val
+    end
+    if field == "line"
+      @nd_line[nid] = val
     end
   end
 
@@ -4331,7 +4347,14 @@ class Compiler
   # only — codegen continues and emits `0` for the call's C expression
   # (the historical silent-no-op behaviour) so existing tests/benches
   # whose outputs happen to coincide with `0` keep compiling.
-  def warn_unresolved_call(mname, recv_tag)
+  #
+  # `nid` is the CallNode whose dispatch fell through; we use its
+  # recorded source line (and the AST's `FILE` header) to print
+  # `<file>:<line>:` ahead of the message. The dedupe key intentionally
+  # excludes the location, so a hot call site that misses on every
+  # iteration still warns once — the line in the message reflects the
+  # first occurrence we saw.
+  def warn_unresolved_call(nid, mname, recv_tag)
     key = mname + ":" + recv_tag
     i = 0
     while i < @unresolved_call_warnings.length
@@ -4341,7 +4364,11 @@ class Compiler
       i = i + 1
     end
     @unresolved_call_warnings.push(key)
-    $stderr.puts "warning: cannot resolve call to '" + mname + "' on " + recv_tag + " (emitting 0)"
+    loc = ""
+    if @source_file != "" && nid >= 0 && @nd_line[nid] >= 0
+      loc = @source_file + ":" + @nd_line[nid].to_s + ": "
+    end
+    $stderr.puts loc + "warning: cannot resolve call to '" + mname + "' on " + recv_tag + " (emitting 0)"
   end
 
   # Walk every class's parent chain. A cycle anywhere on the chain is
@@ -15748,7 +15775,7 @@ class Compiler
     # trampoline body, partially-implemented features whose bench/test
     # outputs happen to coincide with `0`) keep compiling. Hard fail
     # would catch more typos but tear up those existing patterns.
-    warn_unresolved_call(mname, base_type(recv_type))
+    warn_unresolved_call(nid, mname, base_type(recv_type))
     "0"
   end
 
@@ -16076,7 +16103,7 @@ class Compiler
     # user sees the problem is far better than a silently-empty binary.
     # See the matching warn at the receiver-form fallthrough above for
     # why this is a warn-and-emit-0 rather than a hard error.
-    warn_unresolved_call(mname, "(no receiver)")
+    warn_unresolved_call(nid, mname, "(no receiver)")
     "0"
   end
 
