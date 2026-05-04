@@ -16842,7 +16842,11 @@ class Compiler
     while j < lnames.length
       ctp = c_type(ltypes[j])
       if type_is_pointer(ltypes[j]) == 1
-        emit("  " + vol + ctp + "lv_" + lnames[j] + " = " + c_default_val(ltypes[j]) + ";")
+        # Qualify the pointer, not the pointee: `T * volatile lv` keeps
+        # the variable spilled across setjmp/longjmp and pinned for the
+        # GC root scanner, while passing it to `T *self` parameters
+        # doesn't discard a qualifier (which `volatile T *` would).
+        emit("  " + ctp + vol + "lv_" + lnames[j] + " = " + c_default_val(ltypes[j]) + ";")
         emit("  SP_GC_ROOT(lv_" + lnames[j] + ");")
       else
         emit("  " + vol + ctp + " lv_" + lnames[j] + " = " + c_default_val(ltypes[j]) + ";")
