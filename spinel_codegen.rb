@@ -22476,7 +22476,7 @@ class Compiler
       return self_expr
     end
     if t == "LocalVariableReadNode"
-      return fiber_var_ref(@nd_name[nid])
+      return unvolatile_local_ref(fiber_var_ref(@nd_name[nid]), @nd_name[nid])
     end
     if t == "InstanceVariableReadNode"
       # Check if we're in a module class method
@@ -23382,6 +23382,35 @@ class Compiler
       i = i + 1
     end
     ""
+  end
+
+  # When @needs_setjmp == 1, pointer locals are declared `volatile`
+  # (compile_method_locals at 22102) for setjmp/longjmp safety. Reading
+  # those locals into a call slot whose param is plain `sp_X *` then
+  # triggers -Wdiscarded-qualifiers across every callsite in the
+  # affected function — even when the function body has no setjmp
+  # itself (the flag is set globally by any rescue/raise in the unit).
+  # Strip the qualifier at the rvalue read site with an explicit cast.
+  # Only the simple `lv_<name>` shape is rewritten; capture (`(*_cap->X)`)
+  # and heap-promoted-cell (`(*X)`) forms aren't volatile-qualified and
+  # don't need it. Lvalue paths bypass compile_expr and call
+  # fiber_var_ref directly, so this never produces a cast on the LHS.
+  def unvolatile_local_ref(ref, name)
+    if @needs_setjmp != 1
+      return ref
+    end
+    if !ref.start_with?("lv_")
+      return ref
+    end
+    t = find_var_type(name)
+    if type_is_pointer(t) != 1
+      return ref
+    end
+    # Wrap the whole cast expression in parens so a downstream `->`
+    # binds to the casted pointer, not the unqualified ref. C parses
+    # `(T *)p->x` as `(T *)(p->x)` because `->` is higher precedence
+    # than the cast — `((T *)p)->x` is what we actually want.
+    "((" + c_type(t) + ")" + ref + ")"
   end
 
   def fiber_var_ref(name)
